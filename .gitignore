@@ -1,0 +1,17 @@
+# virtualenv locale
+.acoustics/
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# figure generate dai notebook (rigenerabili; le versioni finali della tesina
+# stanno su Drive in Progetto/tesina/figure/)
+figures/*
+!figures/.gitkeep
