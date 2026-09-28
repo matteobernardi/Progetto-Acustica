@@ -80,16 +80,16 @@ class BandDecay:
     # ------------------------------------------------------------------
     # utilita' interne
     # ------------------------------------------------------------------
-    def _block_mean(self, n_blocco):
+    def _block_mean(self, n_blocks):
         """Media l'energia su blocchi contigui: da campioni a intervalli.
 
         Serve a lisciare la curva prima delle regressioni: l'energia
         istantanea di una singola IR fluttua troppo per fittarci una retta.
         Restituisce (energia media per blocco, asse dei tempi dei blocchi).
         """
-        n = len(self.energy) // n_blocco
-        eb = self.energy[:n*n_blocco].reshape(n, n_blocco).mean(axis=1)
-        t = (np.arange(n) + 0.5) * n_blocco / self.fs
+        n = len(self.energy) // n_blocks
+        eb = self.energy[:n*n_blocks].reshape(n, n_blocks).mean(axis=1)
+        t = (np.arange(n) + 0.5) * n_blocks / self.fs
         return eb, t
 
     @staticmethod
@@ -110,8 +110,8 @@ class BandDecay:
         e, fs = self.energy, self.fs
 
         # --- stima iniziale, con blocchi di lunghezza fissa ---
-        noise = e[int(0.9*len(e)):].mean()                  # (2) ultimo 10%
         n_blocco = int(blocco_ms * 1e-3 * fs)               # (1)
+        noise = e[int(0.9*len(e)):].mean()                  # (2) ultimo 10%
 
         eb, t = self._block_mean(n_blocco)
         y = self._db(eb, eb.max())
@@ -175,27 +175,25 @@ class BandDecay:
         i_cross = int(self.t_cross * self.fs)
         return np.clip(self.energy[:i_cross] - self.noise, 0, None)
 
-    def schroeder(self, compensate=True):
+    def schroeder(self):
         """Curva di decadimento di Schroeder, in dB e normalizzata a 0 dB.
 
-        Integrale all'indietro dell'energia troncata:
-        `cumsum` del vettore rovesciato, poi rirovesciato.
-
-        Con `compensate=True` si aggiunge il termine di Chu, cioe' l'energia
-        della coda esponenziale che il troncamento ha buttato via:
-        C = e(t_cross) * tau, con tau = 10 / (|slope| * ln10). Per T20 e'
-        trascurabile; conta per EDT e per i parametri di chiarezza, che
-        dipendono dall'energia totale.
+        Integrale all'indietro dell'energia troncata: `cumsum` del vettore
+        rovesciato, poi rirovesciato.
         """
         e = self.truncated_energy()
 
-        C = 0.0
-        if compensate and self.slope < 0 and len(e) > 20:
-            tau = 10.0 / (abs(self.slope) * np.log(10))
-            coda = e[-int(0.05*len(e)):].mean()
-            C = coda * tau * self.fs        # *fs perche' cumsum somma, non integra
+        # Termine di Chu, disattivato: l'integrale della coda esponenziale
+        # estrapolata oltre il crosspoint, cioe' l'energia che il troncamento
+        # ha buttato via. Su T20 e' ininfluente (<0.5% sopra i 125 Hz, perche'
+        # T20 dipende da una pendenza e non da un livello); dava pero' un
+        # pavimento finito alla curva, che senza vale -inf nell'ultimo
+        # campione. Per riattivarlo, sommare C all'integrale qui sotto.
+        #   tau = 10.0 / (abs(self.slope) * np.log(10))
+        #   coda = e[-max(1, int(0.05*len(e))):].mean()
+        #   C = coda * tau * self.fs    # *fs perche' cumsum somma, non integra
 
-        energia = np.cumsum(e[::-1])[::-1] + C
+        energia = np.cumsum(e[::-1])[::-1]
         return 10*np.log10(energia / energia[0] + 1e-30)
 
     def schroeder_time(self, curva):

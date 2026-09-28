@@ -45,7 +45,9 @@ CAL_DIR = DATA_DIR / 'calibration'           # .cal della catena di misura
 CAL_MDAT_DIR = CAL_DIR / 'mdat'              # misure di calibrazione native
 CAL_TXT_DIR = CAL_DIR / 'txt'                # export testuali delle stesse
 REF_DIR = DATA_DIR / 'reference'             # datasheet e curve di confronto
-FIG_DIR = REPO_ROOT / 'figures'
+FIG_DIR = Path('/Users/matteob/Library/CloudStorage/GoogleDrive-matteobernardi001@gmail.com/'
+               'Il mio Drive/Files/Università/Master/Illuminotecnica:Acustica/Progetto/'
+               'tesina/figure')
 
 # Token del protocollo Java Object Serialization usati sotto.
 _TC_ENDBLOCKDATA_NULL = b'\x78\x70'
@@ -171,7 +173,7 @@ class Measurement:
 
 
 def read_mdat(path: str | Path, ir_len: int = IR_LEN_DEFAULT) -> Measurement:
-    """Legge un `.mdat` REW e restituisce metadati + IR."""
+    """Legge un `.mdat` REW e restituisce metadati e IRs."""
     path = Path(path)
     data = path.read_bytes()
     return Measurement(path=path,
@@ -201,15 +203,58 @@ def load_rew_export(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
 
 def write_cal_file(path: str | Path, freq: np.ndarray, db: np.ndarray,
                    phase: np.ndarray | None = None, note: str = '') -> Path:
-    """Scrive un file di calibrazione nel formato REW ``freq dB phase``.
+    """Scrive un file di calibrazione nel formato REW.
 
-    Caricabile in REW da *Preferences → Cal files*. Le righe di commento
+    Con ``phase=None`` (default) scrive due colonne ``freq dB``: REW ricostruisce
+    la fase a minima fase dal modulo, che e' l'ipotesi corretta per un
+    trasduttore. Scrivere una colonna di fase identicamente nulla insieme a un
+    modulo non piatto descrive invece un filtro non causale.
+
+    Caricabile in REW da *Preferences -> Cal files*. Le righe di commento
     devono iniziare con ``*``.
     """
     path = Path(path)
-    if phase is None:
-        phase = np.zeros_like(freq)
+    cols = [freq, db] if phase is None else [freq, db, phase]
     header = note if note else 'Calibration file'
-    np.savetxt(path, np.column_stack([freq, db, phase]),
+    np.savetxt(path, np.column_stack(cols),
                fmt='%.2f', header=header, comments='* ')
     return path
+
+
+def frac_octave_smooth(freq: np.ndarray, db: np.ndarray,
+                       fraction: float = 3.0) -> np.ndarray:
+    """Lisciatura a 1/``fraction`` di ottava su una griglia log-spaziata.
+
+    Media mobile pesata Hann in log(f). Sui dati REW (passo costante in ppo)
+    la larghezza in punti e' fissa, quindi la finestra e' esattamente una
+    frazione di ottava a ogni frequenza. Serve a togliere il ripple da
+    interferenza (riflessioni) lasciando l'andamento lento, che e' l'unico
+    che possa plausibilmente essere risposta del trasduttore.
+    """
+    ppo = 1.0 / np.median(np.diff(np.log2(freq))) # punti per ottava
+    n = max(3, int(round(ppo / fraction)))
+    if n % 2 == 0:
+        n += 1
+    w = np.hanning(n + 2)[1:-1]
+    w /= w.sum()
+    pad = n // 2
+    padded = np.concatenate([np.full(pad, db[0]), db, np.full(pad, db[-1])])
+    return np.convolve(padded, w, mode='valid')
+
+
+def log_taper(freq: np.ndarray, f_lo: float, f_hi: float,
+              octaves: float = 1.0) -> np.ndarray:
+    """Finestra 0->1->0 con raccordi a coseno rialzato in log(f).
+
+    Sale da 0 a 1 fra ``f_lo`` e ``f_lo * 2**octaves``, scende fra
+    ``f_hi / 2**octaves`` e ``f_hi``. Sostituisce il troncamento netto: una
+    discontinuita' nel modulo corrisponde a una risposta impulsiva che decade
+    come 1/t (fenomeno di Gibbs) e sporca la coda della IR.
+    """
+    x = np.log2(freq)
+    w = np.zeros_like(freq)
+    up = (x - np.log2(f_lo)) / octaves
+    dn = (np.log2(f_hi) - x) / octaves
+    ramp = lambda t: 0.5 * (1.0 - np.cos(np.pi * np.clip(t, 0.0, 1.0)))
+    w = ramp(up) * ramp(dn)
+    return w
