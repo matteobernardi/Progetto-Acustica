@@ -11,7 +11,6 @@ src/
 notebooks/
   calibrazione.ipynb        loopback scheda audio + .cal dell'ECM8000
   analisi.ipynb             IR, T20 per bande, risposta in frequenza media
-  traccia_analisi.ipynb     bozza di riferimento per il lavoro restante
 data/
   room/                     IR misurate: Danger_Pos{1..5}.mdat (3 sweep ciascuno)
     psy_smooth/             stesse misure con smoothing psicoacustico di REW
@@ -21,6 +20,7 @@ data/
     soundcard_minifuse4.cal compensazione loopback della scheda audio
     ecm8000_mic.cal         calibrazione microfono, output di calibrazione.ipynb
   reference/                datasheet HS5 digitalizzato + progetto WebPlotDigitizer
+  results/                  tabelle prodotte da analisi.ipynb
 ```
 
 ## Uso
@@ -32,8 +32,8 @@ jupyter lab
 ```
 
 I notebook si eseguono dalla cartella `notebooks/` e risolvono i percorsi
-relativamente alla radice del repo. Unica eccezione è `FIG_DIR` in
-`src/rew_io.py`, cartella locale in cui vengono salvate le figure.
+relativamente alla radice del repo. Le figure vengono salvate in `figures/`,
+oppure nella cartella indicata dalla variabile d'ambiente `FIG_DIR`.
 
 ## Formato `.mdat`
 
@@ -53,3 +53,7 @@ dei tre sweep è lecita senza risincronizzazione.
   Rooms*, J. Acoust. Soc. Am. **34**, 1819 (1962).
 - H. Kuttruff, *Room Acoustics*.
 - ISO 3382-1 (misura dei parametri acustici degli ambienti).
+
+## Licenza
+
+Codice e dati sono distribuiti con licenza MIT, vedi `LICENSE`.

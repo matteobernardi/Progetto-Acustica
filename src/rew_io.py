@@ -1,19 +1,9 @@
 """Lettura dei file prodotti da Room EQ Wizard (REW).
 
-Due formati, due strategie:
-
-* **`.mdat`** — è una *serializzazione Java* (header ``REW Measurement Data
-  File V2``), non un formato documentato. I parser generici (`javaobj-py3`)
-  falliscono con ``Invalid reference handle`` perché REW usa blocchi
-  ``writeObject`` custom. Qui si legge lo stream a mano sfruttando due fatti
-  del protocollo di serializzazione Java: (a) i valori dei campi primitivi
-  seguono immediatamente il *class descriptor* nell'ordine di dichiarazione,
-  (b) gli array primitivi sono introdotti da token riconoscibili
-  (``ur\\x00\\x02[F`` per il descrittore completo, ``uq`` + handle per i
-  riferimenti successivi allo stesso descrittore).
-
-* **`.txt` / `.cal`** — export testuali a tre colonne ``freq dB phase`` con
-  header variabile di righe che iniziano per ``*``.
+I `.mdat` sono una serializzazione Java, non un formato documentato, e i
+parser generici (`javaobj-py3`) falliscono: lo stream si legge a mano.
+I `.txt` / `.cal` sono export testuali a tre colonne (freq, dB, fase),
+preceduti da un header di lunghezza variabile con righe che iniziano per `*`.
 
 Uso tipico::
 
@@ -26,6 +16,7 @@ Uso tipico::
 
 from __future__ import annotations
 
+import os
 import re
 import struct
 from dataclasses import dataclass, field
@@ -34,8 +25,8 @@ from pathlib import Path
 import numpy as np
 
 # --------------------------------------------------------------------------
-# Percorsi del repo — risolti rispetto alla posizione di questo file, così i
-# notebook funzionano da qualunque cwd e su qualunque macchina che cloni.
+# Percorsi del repo, relativi a questo file: i notebook funzionano da
+# qualunque cartella di lavoro.
 # --------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / 'data'
@@ -45,9 +36,12 @@ CAL_DIR = DATA_DIR / 'calibration'           # .cal della catena di misura
 CAL_MDAT_DIR = CAL_DIR / 'mdat'              # misure di calibrazione native
 CAL_TXT_DIR = CAL_DIR / 'txt'                # export testuali delle stesse
 REF_DIR = DATA_DIR / 'reference'             # datasheet e curve di confronto
-FIG_DIR = Path('/Users/matteob/Library/CloudStorage/GoogleDrive-matteobernardi001@gmail.com/'
-               'Il mio Drive/Files/Università/Master/Illuminotecnica:Acustica/Progetto/'
-               'tesina/figure')
+RESULTS_DIR = DATA_DIR / 'results'           # risultati prodotti dai notebook
+
+# Le figure vanno in figures/, a meno che la variabile d'ambiente FIG_DIR non
+# indichi un'altra cartella (per esempio quella della tesina).
+FIG_DIR = Path(os.environ.get('FIG_DIR', REPO_ROOT / 'figures'))
+FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Token del protocollo Java Object Serialization usati sotto.
 _TC_ENDBLOCKDATA_NULL = b'\x78\x70'
@@ -70,11 +64,11 @@ def _read_utf(data: bytes, p: int) -> tuple[str, int]:
 
 
 def parse_measdata_fields(data: bytes) -> dict[str, object]:
-    """Campi primitivi della **prima** istanza di ``roomeqwizard.MeasData``.
+    """Campi primitivi della **prima** istanza di `roomeqwizard.MeasData`.
 
-    Restituisce un dict con, fra gli altri, ``sampleRate``, ``startFreq``,
-    ``endFreq``, ``numSweeps``, ``dataLength`` e le dimensioni della stanza
-    impostate in REW (``roomLength``/``roomWidth``/``roomHeight``, che valgono
+    Restituisce un dict con, fra gli altri, `sampleRate`, `startFreq`,
+    `endFreq`, `numSweeps`, `dataLength` e le dimensioni della stanza
+    impostate in REW (`roomLength`/`roomWidth`/`roomHeight`, che valgono
     i default se non sono state configurate nel programma).
     """
     anchor = data.find(_MEASDATA_ANCHOR)
@@ -95,7 +89,7 @@ def parse_measdata_fields(data: bytes) -> dict[str, object]:
             tag = data[p]; p += 1
             if tag == 0x74:            # TC_STRING: tipo scritto per esteso
                 _, p = _read_utf(data, p)
-            elif tag == 0x71:          # TC_REFERENCE a una stringa già vista
+            elif tag == 0x71:          # TC_REFERENCE a una stringa gia' vista
                 p += 4
             else:
                 raise ValueError(f'tag tipo inatteso {tag:#x} @ {p}')
@@ -115,13 +109,11 @@ def parse_measdata_fields(data: bytes) -> dict[str, object]:
 
 
 def extract_irs(data: bytes, ir_len: int = IR_LEN_DEFAULT) -> list[np.ndarray]:
-    """Tutti gli array ``float[]`` di lunghezza ``ir_len``: una IR per sweep.
+    """Tutti gli array `float[]` di lunghezza `ir_len`: una IR per sweep.
 
-    Il filtro sulla lunghezza è ciò che distingue le IR dagli altri array
-    presenti nel file (risposta in frequenza su bin lineari con
-    ``dataLength`` ≈ 60021 campioni, curve di calibrazione, icona di
-    anteprima). Gli array sono restituiti in ordine di offset nello stream,
-    che coincide con l'ordine cronologico degli sweep.
+    E' la lunghezza a distinguere le IR dagli altri array del file (risposta
+    in frequenza, curve di calibrazione, icona di anteprima). L'ordine dello
+    stream e' quello cronologico degli sweep.
     """
     out: list[tuple[int, np.ndarray]] = []
 
@@ -137,7 +129,7 @@ def extract_irs(data: bytes, ir_len: int = IR_LEN_DEFAULT) -> list[np.ndarray]:
         ln = struct.unpack('>i', data[j + 6:j + 10])[0]
         if ln == ir_len and j + 10 + 4 * ln <= len(data):
             arr = np.frombuffer(data[j + 10:j + 10 + 4 * ln], dtype='>f4')
-            # scarta falsi positivi: un array di IR è finito e di ampiezza ~1
+            # scarta falsi positivi: un array di IR e' finito e di ampiezza ~1
             if np.isfinite(arr).all() and np.abs(arr).max() < 1e6:
                 out.append((j, arr))
 
@@ -182,11 +174,10 @@ def read_mdat(path: str | Path, ir_len: int = IR_LEN_DEFAULT) -> Measurement:
 
 
 def load_rew_export(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-    """Carica un export testuale REW e restituisce ``(freq, dB)``.
+    """Carica un export testuale REW e restituisce `(freq, dB)`.
 
-    Il numero di righe di header varia con la versione di REW e col tipo di
-    misura, quindi lo si determina cercando la prima riga il cui primo campo
-    è convertibile a float invece di fissare ``skiprows``.
+    L'header cambia con la versione di REW e col tipo di misura, quindi
+    invece di fissare `skiprows` si cerca la prima riga numerica.
     """
     path = Path(path)
     skip = 0
@@ -205,13 +196,11 @@ def write_cal_file(path: str | Path, freq: np.ndarray, db: np.ndarray,
                    phase: np.ndarray | None = None, note: str = '') -> Path:
     """Scrive un file di calibrazione nel formato REW.
 
-    Con ``phase=None`` (default) scrive due colonne ``freq dB``: REW ricostruisce
-    la fase a minima fase dal modulo, che e' l'ipotesi corretta per un
-    trasduttore. Scrivere una colonna di fase identicamente nulla insieme a un
-    modulo non piatto descrive invece un filtro non causale.
+    Senza fase scrive solo `freq dB` e REW la ricostruisce a fase minima,
+    l'ipotesi giusta per un trasduttore. Una fase nulla con un modulo non
+    piatto descriverebbe invece un filtro non causale.
 
-    Caricabile in REW da *Preferences -> Cal files*. Le righe di commento
-    devono iniziare con ``*``.
+    Si carica in REW da *Preferences -> Cal files*.
     """
     path = Path(path)
     cols = [freq, db] if phase is None else [freq, db, phase]
@@ -223,15 +212,14 @@ def write_cal_file(path: str | Path, freq: np.ndarray, db: np.ndarray,
 
 def frac_octave_smooth(freq: np.ndarray, db: np.ndarray,
                        fraction: float = 3.0) -> np.ndarray:
-    """Lisciatura a 1/``fraction`` di ottava su una griglia log-spaziata.
+    """Lisciatura a 1/`fraction` di ottava su una griglia log-spaziata.
 
-    Media mobile pesata Hann in log(f). Sui dati REW (passo costante in ppo)
-    la larghezza in punti e' fissa, quindi la finestra e' esattamente una
-    frazione di ottava a ogni frequenza. Serve a togliere il ripple da
-    interferenza (riflessioni) lasciando l'andamento lento, che e' l'unico
-    che possa plausibilmente essere risposta del trasduttore.
+    Media mobile con finestra di Hann in log(f). I dati REW hanno passo
+    costante in punti per ottava, quindi una finestra di larghezza fissa
+    copre la stessa frazione di ottava a ogni frequenza. Toglie il ripple
+    delle riflessioni e lascia l'andamento lento, quello del trasduttore.
     """
-    ppo = 1.0 / np.median(np.diff(np.log2(freq))) # punti per ottava
+    ppo = 1.0 / np.median(np.diff(np.log2(freq)))  # punti per ottava
     n = max(3, int(round(ppo / fraction)))
     if n % 2 == 0:
         n += 1
@@ -246,13 +234,12 @@ def log_taper(freq: np.ndarray, f_lo: float, f_hi: float,
               octaves: float = 1.0) -> np.ndarray:
     """Finestra 0->1->0 con raccordi a coseno rialzato in log(f).
 
-    Sale da 0 a 1 fra ``f_lo`` e ``f_lo * 2**octaves``, scende fra
-    ``f_hi / 2**octaves`` e ``f_hi``. Sostituisce il troncamento netto: una
+    Sale da 0 a 1 fra `f_lo` e `f_lo * 2**octaves`, scende fra
+    `f_hi / 2**octaves` e `f_hi`. Sostituisce il troncamento netto: una
     discontinuita' nel modulo corrisponde a una risposta impulsiva che decade
     come 1/t (fenomeno di Gibbs) e sporca la coda della IR.
     """
     x = np.log2(freq)
-    w = np.zeros_like(freq)
     up = (x - np.log2(f_lo)) / octaves
     dn = (np.log2(f_hi) - x) / octaves
     ramp = lambda t: 0.5 * (1.0 - np.cos(np.pi * np.clip(t, 0.0, 1.0)))

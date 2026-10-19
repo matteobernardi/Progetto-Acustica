@@ -1,23 +1,11 @@
 """Estremi di integrazione e integrale di Schroeder per una banda d'ottava.
 
-Modulo parallelo a `rew_io`: quello legge i file, questo prepara il
-decadimento energetico su cui poi si misura il tempo di riverberazione.
-Il calcolo di T20/T30 resta fuori, nel notebook.
-
-Uso tipico::
-
-    from integration import BandDecay
-
-    banda = BandDecay.from_ir(ir, fc=500, fs=48000)
-    banda.find_limits()             # costruzione di Lundeby
-    curva = banda.schroeder()       # curva di decadimento in dB
-
-Il punto delicato è `find_limits`. L'estremo superiore di integrazione non
-si puo' fissare a priori: integrare fino in fondo somma anche la coda di
-rumore, che essendo stazionaria contribuisce sempre di piu' andando
-indietro nel tempo, appiattisce la curva su un plateau e allunga il tempo
-di riverberazione. Lundeby et al. (1995) trovano il punto in cui il
-decadimento incontra il rumore iterando fra due stime che dipendono l'una
+`find_limits` trova gli estremi di integrazione per la curva integrale di
+Schroeder. L'estremo superiore di integrazione non si puo' fissare a priori,
+dato che integrare fino in fondo sommerebbe anche la coda di rumore, che
+essendo stazionaria contribuisce sempre di piu' andando indietro nel tempo,
+allungando il tempo di riverberazione. Lundeby et al. (1995) trovano il punto
+in cui il decadimento incontra il rumore iterando fra due stime che dipendono l'una
 dall'altra: la pendenza del decadimento e il livello del rumore.
 """
 
@@ -113,7 +101,7 @@ class BandDecay:
         n_blocco = int(blocco_ms * 1e-3 * fs)               # (1)
         noise = e[int(0.9*len(e)):].mean()                  # (2) ultimo 10%
 
-        eb, t = self._block_mean(n_blocco)
+        eb, t = self._block_mean(n_blocco)                  # (energy block, time)
         y = self._db(eb, eb.max())
         y_noise = self._db(noise, eb.max())
 
@@ -182,16 +170,6 @@ class BandDecay:
         rovesciato, poi rirovesciato.
         """
         e = self.truncated_energy()
-
-        # Termine di Chu, disattivato: l'integrale della coda esponenziale
-        # estrapolata oltre il crosspoint, cioe' l'energia che il troncamento
-        # ha buttato via. Su T20 e' ininfluente (<0.5% sopra i 125 Hz, perche'
-        # T20 dipende da una pendenza e non da un livello); dava pero' un
-        # pavimento finito alla curva, che senza vale -inf nell'ultimo
-        # campione. Per riattivarlo, sommare C all'integrale qui sotto.
-        #   tau = 10.0 / (abs(self.slope) * np.log(10))
-        #   coda = e[-max(1, int(0.05*len(e))):].mean()
-        #   C = coda * tau * self.fs    # *fs perche' cumsum somma, non integra
 
         energia = np.cumsum(e[::-1])[::-1]
         return 10*np.log10(energia / energia[0] + 1e-30)
